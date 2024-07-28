@@ -23,11 +23,21 @@ use core::cell::RefCell;
 use core::ops::DerefMut;
 use cortex_m::interrupt::{free, Mutex};
 
+// これで100.micros()みたいに整数から時間を表す数値へ変換ができるようになる
+// u32にトレイトを追加して型の機能を拡張したイメージ
 use fugit::ExtU32;
 
+// 冗長な型定義をやめるためにtypeで型を定義
+// C言語のtypedefのようなもの。
+// ただし、ジェネリクスが使えるので柔軟性はこっちのほうが高い。
 type GlobalPeripheral<T> = Mutex<RefCell<Option<T>>>;
+// constfnは同じ引数の値に対して必ず同じ結果を返す関数
+// 引数なしなら必ず同じ値を返す。
+// ただし、ジェネリクスは使えるので型の異なる値を返すことはできる。
 const fn initial_global_peripheral<T>() -> GlobalPeripheral<T> { Mutex::new(RefCell::new(None)) }
 
+// constfnでグローバル変数の初期値を設定。
+// 必ず同じ結果になるのでコンパイル時点で式の評価を行い、結果をグローバル変数の初期値としている。
 static ALARM0: GlobalPeripheral<timer::Alarm0> = initial_global_peripheral();
 static LED: GlobalPeripheral<gpio::Pin<gpio::bank0::Gpio25, gpio::FunctionSioOutput, gpio::PullDown>> = initial_global_peripheral();
 
