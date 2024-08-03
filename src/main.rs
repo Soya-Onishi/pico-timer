@@ -154,6 +154,16 @@ fn main() -> ! {
     loop {
         let interrupt_count = get_interrupt_count();
         if counter_old != interrupt_count {
+            // C言語のprintfに相当するprintln!なども一例だが、Rustでは可変長引数というものが存在しない。
+            // これも可変長引数自体がunsafeな存在であるためというのがある（はず）。 
+            // その代わり、可変長引数をマクロを使って再現するという方法をとっている。
+            // 関数名のあとに「!」がつくものは関数型マクロというマクロの一種。
+            // C言語のマクロとイメージとしては近いかも。
+            //
+            // ※printfなどの実装をしたことがある人ならunsafeだというのはなんとなくわかるはず。
+            // ※可変長引数は関数の呼び出し元が与えた情報（printfならフォーマット文字列）を「信頼して」処理をすすめている。
+            // ※そして、その与えられた情報が間違いの場合メモリ破壊などを起こす危険性がある。
+            // ※だからGCCやClangではprintfのフォーマット文に引数の型と合わない指定子の記述があったりすると警告がでる。
             info!("interrupt count incremented! {} -> {}", counter_old, interrupt_count);
             counter_old = interrupt_count;
         }
