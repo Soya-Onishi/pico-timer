@@ -176,8 +176,21 @@ fn TIMER_IRQ_0() {
     let mut alarm0 = ALARM0.borrow(&cs).borrow_mut();
     let mut led = LED.borrow(&cs).borrow_mut();
 
-    // Copyトレイトが実装されている型は
-    // RefCellの変わりに使うことで
+    // Copyトレイトが実装されている型はRefCellの変わりにCellが使える。
+    // 生値を取り出すことができるため、とりだしたあとは書き換えでも何でもできる。
+    // ※Copyトレイトが実装されている型のみなのはCellのgetメソッドにCopyのトレイト制約があるから。
+    // ※つまり、Copyトレイトを実装した型でしかgetメソッドは使えなくなっている。 
+    //
+    // ※LEDなどのペリフェラル用structにはCopyトレイトは実装されていないので、このメソッドは使えない。
+    // ※Copyトレイトが実装されている=実行時にペリフェラルが複製される=ハードのクローンが物理的に湧いてでるなので
+    // ※Copyトレイトが実装されていないのはイメージ的にも正しい。
+    //
+    // ※ちなみにRustの制約として、
+    // ※すでに別ライブラリ（標準ライブラリ含む）で定義されているstructとトレイトを使って
+    // ※新しくトレイトの実装をすることはできなくなっている。
+    // ※今回の場合だと、LED用のペリフェラルの型（rp2040-pacライブラリ）に
+    // ※無理やりCopyトレイト（coreライブラリ）を実装して
+    // ※getメソッドを使えるようにしてやる！みたいなことはできず、コンパイルエラーになる。
     let counter = INTERRUPT_COUNTER.borrow(&cs).get();
     if let (Some(alarm0), Some(led)) = (alarm0.deref_mut(), led.deref_mut()) {
         alarm0.clear_interrupt();
