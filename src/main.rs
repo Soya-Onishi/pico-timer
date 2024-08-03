@@ -10,8 +10,8 @@ use rp_pico as bsp;
 
 // rp2040_pacをPAC（Peripheral Access Crate）として使用する
 use bsp::hal::pac;
-use bsp::{entry, hal::timer::Alarm};
 use bsp::hal::{clocks::init_clocks_and_plls, gpio, sio::Sio, timer, watchdog};
+use bsp::{entry, hal::timer::Alarm};
 
 use pac::interrupt;
 
@@ -19,9 +19,9 @@ use pac::interrupt;
 // StatefulOutputPinトレイトで宣言されているtoggleメソッドを使うため。
 use embedded_hal::digital::StatefulOutputPin;
 
-use core::cell::RefCell;
+use core::cell::{Cell, RefCell};
 use core::ops::DerefMut;
-use cortex_m::interrupt::{free, Mutex};
+use cortex_m::interrupt::{free, CriticalSection, Mutex};
 
 // これで100.micros()みたいに整数から時間を表す数値へ変換ができるようになる
 // u32にトレイトを追加して型の機能を拡張したイメージ
@@ -34,12 +34,18 @@ type GlobalPeripheral<T> = Mutex<RefCell<Option<T>>>;
 // constfnは同じ引数の値に対して必ず同じ結果を返す関数
 // 引数なしなら必ず同じ値を返す。
 // ただし、ジェネリクスは使えるので型の異なる値を返すことはできる。
-const fn initial_global_peripheral<T>() -> GlobalPeripheral<T> { Mutex::new(RefCell::new(None)) }
+const fn initial_global_peripheral<T>() -> GlobalPeripheral<T> {
+    Mutex::new(RefCell::new(None))
+}
 
 // constfnでグローバル変数の初期値を設定。
 // 必ず同じ結果になるのでコンパイル時点で式の評価を行い、結果をグローバル変数の初期値としている。
 static ALARM0: GlobalPeripheral<timer::Alarm0> = initial_global_peripheral();
-static LED: GlobalPeripheral<gpio::Pin<gpio::bank0::Gpio25, gpio::FunctionSioOutput, gpio::PullDown>> = initial_global_peripheral();
+static LED: GlobalPeripheral<
+    gpio::Pin<gpio::bank0::Gpio25, gpio::FunctionSioOutput, gpio::PullDown>,
+> = initial_global_peripheral();
+
+static INTERRUPT_COUNTER: Mutex<Cell<u32>> = Mutex::new(Cell::new(0));
 
 const ALARM0_INTERVAL_MS: u32 = 1000;
 
@@ -48,7 +54,7 @@ fn main() -> ! {
     // ペリフェラルがまとめて入っている構造体を取得します。
     // ペリフェラルが構造体に入れることで、
     // ペリフェラルを触る際にもRustの所有権機能を利用することになります。
-    // 
+    //
     // Rustでは基本的にメモリアドレスを直接触る
     // unsafeなコードは書かないようにという考え方があります。
     // そういうコードは基本的にHALクレートの中に閉じ込められ、
@@ -56,7 +62,7 @@ fn main() -> ! {
     // ペリフェラルの構造体およびTraitを利用することになります
     let mut pac = pac::Peripherals::take().unwrap();
 
-    // Single Cycle IO 
+    // Single Cycle IO
     // 1サイクルでアクセス可能なI/Oポート。
     // クレートの説明に`Provides core-local and inter-core hardware for the two processors, with single-cycle access.`とあるので、
     // アクセス競合が起こらないI/Oポートのことを言っているのでは
@@ -65,10 +71,9 @@ fn main() -> ! {
     // rp2040-pac SIO: https://docs.rs/rp2040-pac/latest/rp2040_pac/struct.SIO.html
     let sio = Sio::new(pac.SIO);
 
-
     // init_clocks_and_plls()で必要になるので、
     // watchdogをここでインスタンス化しておきます。
-    // watchdog自体は有効になっていません。 
+    // watchdog自体は有効になっていません。
     let mut watchdog = watchdog::Watchdog::new(pac.WATCHDOG);
 
     // クロック関連の設定を初期化
@@ -102,14 +107,14 @@ fn main() -> ! {
 
     // pins.ledでLEDにつながっているピンを指定する
     // rp-picoではGPIO25のピンにLEDがつながっているため、このような書き方をするよう。
-    // 
+    //
     // ちなみにピン定義にはマクロが使われているので、
     // パッと見でどういう定義になっているのかわかりにくい。
     let led_pin = pins.led.into_push_pull_output();
 
     // タイマー割り込み用のALARMを取り出す。
     let mut timer = timer::Timer::new(pac.TIMER, &mut pac.RESETS, &clocks);
-    
+
     // alarm_0()は戻り値にOption<T>を使っている。
     // Option<T>は値を持っているかどうかわからないという変数。
     // 値が入っているかどうか（SomeかNoneか）を判定して、
@@ -129,9 +134,7 @@ fn main() -> ! {
     free(|cs| {
         alarm0.enable_interrupt();
         alarm0.clear_interrupt();
-        alarm0
-            .schedule(ALARM0_INTERVAL_MS.micros())
-            .unwrap();
+        alarm0.schedule(ALARM0_INTERVAL_MS.micros()).unwrap();
 
         // CriticalSectionを使ってMutexの中身を操作している部分
         ALARM0.borrow(cs).replace(Some(alarm0));
@@ -144,7 +147,17 @@ fn main() -> ! {
         pac::NVIC::unmask(pac::Interrupt::TIMER_IRQ_0);
     }
 
-    loop {}
+    // free()は値を返すこともできます。
+    // ※ジェネリクスの機能で同じ関数でも異なる戻り値の型を扱うことができる
+    let get_interrupt_count = || { free(|cs| INTERRUPT_COUNTER.borrow(cs).get()) };
+    let mut counter_old = get_interrupt_count(); 
+    loop {
+        let interrupt_count = get_interrupt_count();
+        if counter_old != interrupt_count {
+            info!("interrupt count incremented! {} -> {}", counter_old, interrupt_count);
+            counter_old = interrupt_count;
+        }
+    }
 }
 
 // #pragma interruptみたいなもの
@@ -153,18 +166,25 @@ fn main() -> ! {
 // これをつけることで、コンパイル時にASTの操作が行われる（はず）。
 #[interrupt]
 fn TIMER_IRQ_0() {
-    free(|cs| {
-        // 上で書いた値が入っているかどうか（SomeかNoneか）を判定して処理を行うか決めている場所。
-        if let (Some(alarm0), Some(led)) = (
-            ALARM0.borrow(cs).borrow_mut().deref_mut(),
-            LED.borrow(cs).borrow_mut().deref_mut(),
-        ) {
-            alarm0.clear_interrupt();
-            alarm0
-                .schedule(ALARM0_INTERVAL_MS.micros())
-                .unwrap();
+    // TIMER_IRQ_0は多重割り込みが発生しないので
+    // free()を使って割り込み禁止する必要がない。
+    // そのため、unsafeではあるが、
+    // CriticalSectionのトークンを得る関数を利用して、
+    // 割り込み禁止の処理を省略する。
+    let cs = unsafe { CriticalSection::new() };
 
-            led.toggle().unwrap();
-        }
-    })
+    let mut alarm0 = ALARM0.borrow(&cs).borrow_mut();
+    let mut led = LED.borrow(&cs).borrow_mut();
+
+    // Copyトレイトが実装されている型は
+    // RefCellの変わりに使うことで
+    let counter = INTERRUPT_COUNTER.borrow(&cs).get();
+    if let (Some(alarm0), Some(led)) = (alarm0.deref_mut(), led.deref_mut()) {
+        alarm0.clear_interrupt();
+        alarm0.schedule(ALARM0_INTERVAL_MS.micros()).unwrap();
+
+        led.toggle().unwrap();
+    }
+
+    INTERRUPT_COUNTER.borrow(&cs).set(counter.wrapping_add(1));
 }
