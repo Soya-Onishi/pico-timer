@@ -149,13 +149,13 @@ fn main() -> ! {
 
     // free()は値を返すこともできます。
     // ※ジェネリクスの機能で同じ関数でも異なる戻り値の型を扱うことができる
-    let get_interrupt_count = || { free(|cs| INTERRUPT_COUNTER.borrow(cs).get()) };
-    let mut counter_old = get_interrupt_count(); 
+    let get_interrupt_count = || free(|cs| INTERRUPT_COUNTER.borrow(cs).get());
+    let mut counter_old = get_interrupt_count();
     loop {
         let interrupt_count = get_interrupt_count();
         if counter_old != interrupt_count {
             // C言語のprintfに相当するprintln!なども一例だが、Rustでは可変長引数というものが存在しない。
-            // これも可変長引数自体がunsafeな存在であるためというのがある（はず）。 
+            // これも可変長引数自体がunsafeな存在であるためというのがある（はず）。
             // その代わり、可変長引数をマクロを使って再現するという方法をとっている。
             // 関数名のあとに「!」がつくものは関数型マクロというマクロの一種。
             // C言語のマクロとイメージとしては近いかも。
@@ -164,7 +164,10 @@ fn main() -> ! {
             // ※可変長引数は関数の呼び出し元が与えた情報（printfならフォーマット文字列）を「信頼して」処理をすすめている。
             // ※そして、その与えられた情報が間違いの場合メモリ破壊などを起こす危険性がある。
             // ※だからGCCやClangではprintfのフォーマット文に引数の型と合わない指定子の記述があったりすると警告がでる。
-            info!("interrupt count incremented! {} -> {}", counter_old, interrupt_count);
+            info!(
+                "interrupt count incremented! {} - {}",
+                counter_old, interrupt_count
+            );
             counter_old = interrupt_count;
         }
     }
@@ -189,7 +192,7 @@ fn TIMER_IRQ_0() {
     // Copyトレイトが実装されている型はRefCellの変わりにCellが使える。
     // 生値を取り出すことができるため、とりだしたあとは書き換えでも何でもできる。
     // ※Copyトレイトが実装されている型のみなのはCellのgetメソッドにCopyのトレイト制約があるから。
-    // ※つまり、Copyトレイトを実装した型でしかgetメソッドは使えなくなっている。 
+    // ※つまり、Copyトレイトを実装した型でしかgetメソッドは使えなくなっている。
     //
     // ※LEDなどのペリフェラル用structにはCopyトレイトは実装されていないので、このメソッドは使えない。
     // ※Copyトレイトが実装されている=実行時にペリフェラルが複製される=ハードのクローンが物理的に湧いてでるなので
